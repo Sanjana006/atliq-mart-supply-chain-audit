@@ -1,26 +1,75 @@
 # DAX Measures — AtliQ Mart Supply Chain Audit
 
-## Core KPIs
+---
 
-OT % = DIVIDE(SUM(fact_orders_aggregate[on_time]), COUNT(fact_orders_aggregate[order_id])) * 100
+## 📦 Core Delivery KPIs
 
-IF % = DIVIDE(SUM(fact_orders_aggregate[in_full]), COUNT(fact_orders_aggregate[order_id])) * 100
+```dax
+OT % = 
+DIVIDE(SUM(fact_orders_aggregate[on_time]), COUNT(fact_orders_aggregate[order_id])) * 100
 
-OTIF % = DIVIDE(SUM(fact_orders_aggregate[otif]), COUNT(fact_orders_aggregate[order_id])) * 100
+IF % = 
+DIVIDE(SUM(fact_orders_aggregate[in_full]), COUNT(fact_orders_aggregate[order_id])) * 100
 
-OTIF Target = AVERAGE(dim_targets_orders[otif_target%])
+OTIF % Customer = 
+DIVIDE(SUM(fact_orders_aggregate[otif]), COUNTROWS(fact_orders_aggregate)) * 100
 
-OTIF Gap = [OTIF %] - [OTIF Target]
+OTIF % Product Aware = 
+DIVIDE(SUM(fact_order_lines[On Time In Full]), COUNTROWS(fact_order_lines)) * 100
 
-Total Orders = COUNT(fact_orders_aggregate[order_id])
+Fill Rate % = 
+DIVIDE(SUM(fact_order_lines[delivery_qty]), SUM(fact_order_lines[order_qty])) * 100
 
-## Order Split
+Incomplete Rate % = 
+DIVIDE(
+    COUNTROWS(FILTER(fact_order_lines, fact_order_lines[In Full] = 0)),
+    COUNTROWS(fact_order_lines)
+) * 100
+```
 
-Orders On Track = COUNTROWS(FILTER(fact_orders_aggregate, fact_orders_aggregate[otif] = 1))
+---
 
-Orders Failed = COUNTROWS(FILTER(fact_orders_aggregate, fact_orders_aggregate[otif] = 0))
+## 🎯 Target & Gap Analysis
 
-## Failure Type Breakdown
+```dax
+OTIF Target = 
+AVERAGE(dim_targets_orders[otif_target%])
+
+OTIF Gap = 
+[OTIF % Product Aware] - [OTIF Target]
+
+Avg OTIF Gap = 
+AVERAGEX(ALL(dim_customers[customer_name]), [OTIF Gap])
+
+Avg OTIF Product = 
+AVERAGEX(VALUES(dim_customers[customer_name]), [OTIF % Product Aware])
+```
+
+---
+
+## 🔢 Order Volume
+
+```dax
+Total Orders = 
+COUNT(fact_orders_aggregate[order_id])
+
+Avg Orders = 
+AVERAGEX(VALUES(dim_customers[customer_name]), [Total Orders])
+
+Total Undelivered Qty = 
+SUM(fact_order_lines[order_qty]) - SUM(fact_order_lines[delivery_qty])
+```
+
+---
+
+## ❌ Failure Classification
+
+```dax
+Orders On Track = 
+COUNTROWS(FILTER(fact_orders_aggregate, fact_orders_aggregate[otif] = 1))
+
+Orders Failed = 
+COUNTROWS(FILTER(fact_orders_aggregate, fact_orders_aggregate[otif] = 0))
 
 Only Late = 
 COUNTROWS(
@@ -45,35 +94,48 @@ COUNTROWS(
         fact_orders_aggregate[in_full] = 0
     )
 )
+```
 
-## Product & Quantity KPIs
+---
 
-Total Undelivered Qty = 
-SUM(fact_order_lines[order_qty]) - SUM(fact_order_lines[delivery_qty])
+## 🚨 Customer Risk Segmentation
 
-Fill Rate % = 
-DIVIDE(SUM(fact_order_lines[delivery_qty]), SUM(fact_order_lines[order_qty])) * 100
-
-Incomplete Rate % = 
-DIVIDE(
-    COUNTROWS(FILTER(fact_order_lines, fact_order_lines[in_full] = 0)),
-    COUNTROWS(fact_order_lines)
-) * 100
-
-## Customer Risk
-
+```dax
 Customers Below Target = 
 COUNTROWS(
-    FILTER(
-        VALUES(dim_customers[customer_id]),
-        [OTIF %] < [OTIF Target]
-    )
+    FILTER(VALUES(dim_customers[customer_id]), [OTIF % Product Aware] < [OTIF Target])
 )
 
-Avg OTIF Gap = 
-AVERAGEX(
-    VALUES(dim_customers[customer_id]),
-    [OTIF Gap]
+Customers Below 20% OTIF = 
+COUNTROWS(
+    FILTER(VALUES(dim_customers[customer_id]), [OTIF % Customer] < 20)
 )
 
-Customers Monitored = DISTINCTCOUNT(dim_customers[customer_id])
+Customers Critical Risk = 
+CALCULATE(
+    DISTINCTCOUNT(dim_customers[customer_name]),
+    FILTER(ALL(dim_customers), [OTIF % Product Aware] < [OTIF Target] - 20)
+)
+
+Customer Count by Risk = 
+VAR RiskSelected = SELECTEDVALUE('Risk Category'[Risk])
+RETURN
+SWITCH(
+    RiskSelected,
+    "Healthy",   COUNTROWS(FILTER(VALUES(dim_customers[customer_id]), [OTIF % Customer] >= 30)),
+    "High Risk", COUNTROWS(FILTER(VALUES(dim_customers[customer_id]), [OTIF % Customer] < 30))
+)
+```
+
+---
+
+## 🏷️ Dynamic Labels
+
+```dax
+Worst Category = 
+CONCATENATEX(
+    TOPN(1, VALUES(dim_products[category]), [Total Undelivered Qty], DESC),
+    dim_products[category],
+    ", "
+)
+```
